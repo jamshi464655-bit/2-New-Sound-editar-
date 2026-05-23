@@ -6,8 +6,15 @@ import os
 import zipfile
 from io import BytesIO
 
-async def edge_tts_generate(text, voice, output_filename):
-    communicate = edge_tts.Communicate(text, voice)
+# --- ലളിതമായ വോളിയം/ബാസ്സ് ബൂസ്റ്റ് ഫങ്ക്ഷൻ (സെർവർ ഫ്രണ്ട്‌ലി) ---
+def apply_web_effects(input_filename, bass_level, treble_level, speed_level):
+    # ഈ വേർഷനിൽ എറർ ഒഴിവാക്കാൻ edge_tts-ൽ നിന്ന് വരുന്ന ഫയൽ നേരിട്ട് പ്രോസസ്സ് ചെയ്യുന്നു.
+    # ഭാവിയിൽ കൂടുതൽ ഹെവി എഫക്റ്റുകൾ വേണമെങ്കിൽ നമുക്ക് ലോക്കൽ പിസിയിൽ തന്നെ റൺ ചെയ്യുന്നതാകും നല്ലത്.
+    pass
+
+async def edge_tts_generate(text, voice, output_filename, rate, pitch):
+    # സ്പീഡും പിച്ചും ഇവിടെ തന്നെ അഡ്ജസ്റ്റ് ചെയ്യുന്നു (എറർ പൂർണ്ണമായി ഒഴിവാക്കാൻ)
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     await communicate.save(output_filename)
 
 def generate_google_tts(text, lang, output_filename):
@@ -36,8 +43,13 @@ with left_col:
     )
 
 with right_col:
-    st.write("### ℹ️ Web Server Status")
-    st.info("🌐 Web Hosting Mode: സെർവറിൽ മികച്ച സ്പീഡിലും എറർ ഇല്ലാതെയും വർക്ക് ചെയ്യാൻ പാകത്തിലാണ് ഈ വേർഷൻ കോൺഫിഗർ ചെയ്തിരിക്കുന്നത്.")
+    st.write("### 🎛️ Studio Editing Console")
+    # വെബിൽ സുരക്ഷിതമായി വർക്ക് ചെയ്യുന്ന എഫക്റ്റ് കൺട്രോളുകൾ
+    speed_val = st.slider("⏱️ Voice Speed (വേഗത)", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
+    pitch_val = st.slider("🎼 Voice Pitch (ശബ്ദത്തിന്റെ കട്ടി)", min_value=-20, max_value=20, value=0, step=2)
+    
+    st.write("")
+    st.caption("💡 *Tip: കട്ടി കൂട്ടാൻ Pitch കൂട്ടുക, റോബോട്ടിക് ശബ്ദം മാറാൻ Speed 1.0-ൽ നിർത്തുക.*")
 
 st.write("---")
 
@@ -51,19 +63,22 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
         generated_files = []
         progress_bar = st.progress(0)
         
+        # Edge TTS-ലേക്ക് സ്പീഡ്, പിച്ച് വാല്യൂസ് ഫോർമാറ്റ് ചെയ്യുന്നു
+        speed_arg = f"{'+' if speed_val >= 1.0 else ''}{int((speed_val - 1.0) * 100)}%"
+        pitch_arg = f"{'+' if pitch_val >= 0 else ''}{pitch_val}Hz"
+        
         for index, paragraph in enumerate(paragraphs):
             filename = f"studio_paragraph_{index + 1}.mp3"
             
-            # TTS ജനറേഷൻ
             try:
                 if voice_option[1] == "edge_midhun":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename, speed_arg, pitch_arg))
                 elif voice_option[1] == "edge_sobhana":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename, speed_arg, pitch_arg))
                 elif voice_option[1] == "google_ml":
                     generate_google_tts(paragraph, "ml", filename)
                 elif voice_option[1] == "edge_en_ava":
-                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename))
+                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename, speed_arg, pitch_arg))
                 
                 generated_files.append(filename)
             except Exception as e:
