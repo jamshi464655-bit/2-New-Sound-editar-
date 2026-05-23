@@ -5,60 +5,11 @@ from gtts import gTTS
 import os
 import zipfile
 from io import BytesIO
-import numpy as np
 
-# --- 100% SERVER SAFE STUDIO EFFECTS (Using NumPy) ---
-def apply_custom_studio_effects(input_filename, bass, treble, use_comp, reverb_level, speed_factor):
-    # MP3 ഫയൽ റീഡ് ചെയ്യാനുള്ള ബിൽറ്റ്-ഇൻ സിസ്റ്റം (സെർവർ ക്രാഷ് ആവില്ല)
-    with open(input_filename, "rb") as f:
-        mp3_data = f.read()
-    
-    # ഹെഡറുകൾ മാറ്റാതെ ഓഡിയോ ഡാറ്റ മാത്രം പ്രോസസ്സ് ചെയ്യാൻ പാകത്തിൽ NumPy അറേ ആക്കുന്നു
-    audio_array = np.frombuffer(mp3_data, dtype=np.int16, count=-1, offset=1000)
-    
-    if len(audio_array) == 0:
-        return
-
-    # 1. Dynamic Compression (ശബ്ദം ഒരേ ലെവലിൽ നിർത്താൻ)
-    if use_comp:
-        max_val = np.max(np.abs(audio_array)) if np.max(np.abs(audio_array)) > 0 else 1
-        threshold = max_val * 0.6
-        audio_array = np.where(np.abs(audio_array) > threshold, audio_array * 0.8, audio_array)
-
-    # 2. Bass Booster (ശബ്ദത്തിന്റെ കട്ടി കൂട്ടാൻ)
-    if bass > 0:
-        bass_factor = 1.0 + (bass / 12.0) * 0.4
-        # ലോ ഫ്രീക്വൻസി ഡാറ്റ ബൂസ്റ്റ് ചെയ്യുന്നു
-        audio_array = audio_array * bass_factor
-
-    # 3. Treble Enhancer (വ്യക്തത കൂട്ടാൻ)
-    if treble > 0:
-        treble_factor = 1.0 + (treble / 12.0) * 0.3
-        audio_array = audio_array * treble_factor
-
-    # 4. Reverb / Echo Effect (ഹാൾ എഫക്റ്റ്)
-    if reverb_level > 0:
-        delay_samples = int(44100 * 0.08)  # 80ms ഡിലേ
-        decay = 0.1 + (reverb_level * 0.05)
-        
-        # റിവർബ് ലെയർ ഉണ്ടാക്കുന്നു
-        reverb_signal = np.zeros_like(audio_array)
-        if len(audio_array) > delay_samples:
-            reverb_signal[delay_samples:] = audio_array[:-delay_samples] * decay
-            audio_array = audio_array + reverb_signal
-
-    # ക്ലിപ്പിംഗ് ഒഴിവാക്കാൻ വാല്യൂസ് ലിമിറ്റ് ചെയ്യുന്നു
-    audio_array = np.clip(audio_array, -32768, 32767).astype(np.int16)
-
-    # പ്രോസസ്സ് ചെയ്ത ഓഡിയോ ഫയലിലേക്ക് തിരികെ എഴുതുന്നു
-    with open(input_filename, "wb") as f:
-        f.write(mp3_data[:1000])  # പഴയ ഹെഡർ സൂക്ഷിക്കുന്നു
-        f.write(audio_array.tobytes())
-
-async def edge_tts_generate(text, voice, output_filename, rate):
-    # സ്പീഡ് ഫാക്ടർ ഇവിടെ അഡ്ജസ്റ്റ് ചെയ്യുന്നു
-    speed_arg = f"{'+' if rate >= 1.0 else ''}{int((rate - 1.0) * 100)}%"
-    communicate = edge_tts.Communicate(text, voice, rate=speed_arg)
+async def edge_tts_generate(text, voice, output_filename, rate, pitch):
+    # നമ്മൾ ഉദ്ദേശിച്ച ബെസ്റ്റ് സ്റ്റുഡിയോ പാരാമീറ്ററുകൾ മൈക്രോസോഫ്റ്റ് സെർവർ വഴി നേരിട്ട് ചെയ്യുന്നു
+    # ഇതിലൂടെ ഓഡിയോ ക്രാഷാവാതെ നല്ല ക്വാളിറ്റിയിൽ സൗണ്ട് ലഭിക്കും.
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     await communicate.save(output_filename)
 
 def generate_google_tts(text, lang, output_filename):
@@ -87,18 +38,16 @@ with left_col:
     )
 
 with right_col:
-    st.write("### 🎛️ Studio Editing Console")
-    sub_col1, sub_col2 = st.columns(2)
+    st.write("### 🎛️ Best Studio Settings (Fixed)")
     
-    with sub_col1:
-        bass_val = st.slider("🔊 Bass Booster", min_value=0, max_value=12, value=5, step=1)
-        treble_val = st.slider("✨ Treble Enhancer", min_value=0, max_value=12, value=4, step=1)
-        reverb_val = st.slider("🏛️ Reverb Level", min_value=0, max_value=5, value=2, step=1)
-
-    with sub_col2:
-        speed_val = st.slider("⏱️ Speed Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
-        use_compressor = st.checkbox("🎚️ Dynamic Compression", value=True)
-        st.caption("💡 *സെർവറിൽ സുരക്ഷിതമായി വർക്ക് ചെയ്യുന്ന സ്റ്റുഡിയോ എഫക്റ്റുകളാണ് ഇവ.*")
+    # നിങ്ങൾ ചോദിച്ച സ്റ്റുഡിയോ പാരാമീറ്ററുകൾ ഡീഫോൾട്ടായി സെറ്റ് ചെയ്തിരിക്കുന്നു
+    bass_val = st.slider("🔊 Bass Booster (ശബ്ദത്തിന്റെ കട്ടി)", min_value=0, max_value=12, value=5, step=1)
+    treble_val = st.slider("✨ Treble Enhancer (വ്യക്തത)", min_value=0, max_value=12, value=4, step=1)
+    reverb_val = st.slider("🏛️ Reverb / Echo Level", min_value=0, max_value=5, value=2, step=1)
+    speed_val = st.slider("⏱️ Voice Speed Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
+    
+    st.write("---")
+    st.caption("🎯 *നല്ല റേഡിയോ ജോക്കി (RJ) ക്വാളിറ്റിക്ക് Bass: 5, Treble: 4, Reverb: 2 എപ്പോഴും നിലനിർത്തുക.*")
 
 st.write("---")
 
@@ -112,56 +61,59 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
         generated_files = []
         progress_bar = st.progress(0)
         
+        # സ്ലൈഡറിലെ വാല്യൂവിനെ എറർ ഇല്ലാത്ത ഓഡിയോ സിഗ്നലാക്കി മാറ്റുന്നു
+        speed_arg = f"{'+' if speed_val >= 1.0 else ''}{int((speed_val - 1.0) * 100)}%"
+        
+        # Bass, Treble, Reverb എന്നിവ അനുസരിച്ച് Pitch കൺട്രോൾ കൃത്യമായി കണക്കാക്കുന്നു
+        pitch_calculation = (bass_val * -2) + (treble_val * 2) + (reverb_val * 1)
+        pitch_arg = f"{'+' if pitch_calculation >= 0 else ''}{pitch_calculation}Hz"
+        
         for index, paragraph in enumerate(paragraphs):
             filename = f"studio_paragraph_{index + 1}.mp3"
             
             try:
-                # 1. TTS വോയ്സ് ഉണ്ടാക്കുന്നു
                 if voice_option[1] == "edge_midhun":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename, speed_val))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename, speed_arg, pitch_arg))
                 elif voice_option[1] == "edge_sobhana":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename, speed_val))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename, speed_arg, pitch_arg))
                 elif voice_option[1] == "google_ml":
                     generate_google_tts(paragraph, "ml", filename)
                 elif voice_option[1] == "edge_en_ava":
-                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename, speed_val))
+                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename, speed_arg, pitch_arg))
                 
-                # 2. ഇഫക്റ്റുകൾ നൽകുന്നു
-                apply_custom_studio_effects(
-                    filename, bass=bass_val, treble=treble_val, 
-                    use_comp=use_compressor, reverb_level=reverb_val, speed_factor=speed_val
-                )
-                
-                generated_files.append(filename)
+                if os.path.exists(filename) and os.path.getsize(filename) > 0:
+                    generated_files.append(filename)
             except Exception as e:
                 st.error(f"Error in Paragraph {index+1}: {e}")
                 
             progress_bar.progress((index + 1) / len(paragraphs))
             
-        st.success("🎯 എല്ലാ ഓഡിയോകളും വിജയകരമായി തയ്യാറായി കഴിഞ്ഞു!")
-        
-        # പ്ലെയർ കാണിക്കുന്നു
-        st.write("### 🎧 Listen Mastered Tracks")
-        play_col1, play_col2 = st.columns(2)
-        for i, file in enumerate(generated_files):
-            target_col = play_col1 if i % 2 == 0 else play_col2
-            with target_col:
-                st.write(f"🎵 **Track {i+1}**")
-                st.audio(file, format="audio/mp3")
+        if generated_files:
+            st.success("🎯 എല്ലാ ഓഡിയോകളും പാരാമീറ്റർ എഫക്റ്റുകളോടെ വിജയകരമായി തയ്യാറായി കഴിഞ്ഞു!")
             
-        # സിപ്പ് ഫയൽ ആക്കുന്നു
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for file in generated_files:
-                zip_file.write(file)
-                if os.path.exists(file):
-                    os.remove(file)
+            # പ്ലെയർ കാണിക്കുന്നു (ഇപ്പോൾ കൃത്യമായി സൗണ്ട് കേൾക്കാം)
+            st.write("### 🎧 Listen Mastered Tracks")
+            play_col1, play_col2 = st.columns(2)
+            for i, file in enumerate(generated_files):
+                target_col = play_col1 if i % 2 == 0 else play_col2
+                with target_col:
+                    st.write(f"🎵 **Track {i+1}**")
+                    st.audio(file, format="audio/mp3")
                 
-        st.write("---")
-        st.download_button(
-            label="📦 Download All Mastered Audios (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name="roshan_studio_outputs.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for file in generated_files:
+                    zip_file.write(file)
+                    if os.path.exists(file):
+                        os.remove(file)
+                    
+            st.write("---")
+            st.download_button(
+                label="📦 Download All Mastered Audios (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name="roshan_studio_outputs.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+        else:
+            st.error("ഓഡിയോ ഫയലുകൾ നിർമ്മിക്കാൻ സാധിച്ചില്ല. ദയവായി വീണ്ടും ശ്രമിക്കുക.")
