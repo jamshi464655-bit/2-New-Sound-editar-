@@ -5,16 +5,53 @@ from gtts import gTTS
 import os
 import zipfile
 from io import BytesIO
+from pedalboard import Pedalboard, Compressor, HighpassFilter, LowpassFilter, PeakFilter, Reverb
+import io
+import soundfile as sf
 
-# --- ലളിതമായ വോളിയം/ബാസ്സ് ബൂസ്റ്റ് ഫങ്ക്ഷൻ (സെർവർ ഫ്രണ്ട്‌ലി) ---
-def apply_web_effects(input_filename, bass_level, treble_level, speed_level):
-    # ഈ വേർഷനിൽ എറർ ഒഴിവാക്കാൻ edge_tts-ൽ നിന്ന് വരുന്ന ഫയൽ നേരിട്ട് പ്രോസസ്സ് ചെയ്യുന്നു.
-    # ഭാവിയിൽ കൂടുതൽ ഹെവി എഫക്റ്റുകൾ വേണമെങ്കിൽ നമുക്ക് ലോക്കൽ പിസിയിൽ തന്നെ റൺ ചെയ്യുന്നതാകും നല്ലത്.
-    pass
+# --- അഡ്വാൻസ്ഡ് സ്റ്റുഡിയോ എഫക്റ്റ് ഫങ്ക്ഷൻ (Using Pedalboard) ---
+def apply_advanced_studio_effects(input_filename, bass, treble, use_comp, reverb_level, speed_factor):
+    # ഓഡിയോ ഫയൽ റീഡ് ചെയ്യുന്നു
+    data, samplerate = sf.read(input_filename)
+    
+    # സ്റ്റീരിയോ ഫയലുകളെ മോണോ ആക്കുന്നു (പ്രോസസ്സിംഗ് എളുപ്പമാക്കാൻ)
+    if len(data.shape) > 1:
+        data = data[:, 0]
 
-async def edge_tts_generate(text, voice, output_filename, rate, pitch):
-    # സ്പീഡും പിച്ചും ഇവിടെ തന്നെ അഡ്ജസ്റ്റ് ചെയ്യുന്നു (എറർ പൂർണ്ണമായി ഒഴിവാക്കാൻ)
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    # പെഡൽബോർഡ് ബോക്സ് സെറ്റ് ചെയ്യുന്നു
+    board_effects = []
+
+    # 1. Dynamic Compressor
+    if use_comp:
+        board_effects.append(Compressor(threshold_db=-16, ratio=3.5, attack_ms=10, release_ms=60))
+
+    # 2. Bass Booster (Low Shelf / Peak Filter around 100Hz)
+    if bass > 0:
+        board_effects.append(PeakFilter(cutoff_frequency_hz=100, gain_db=bass, q=1.0))
+
+    # 3. Treble Enhancer (High Pass / Peak Filter around 3000Hz)
+    if treble > 0:
+        board_effects.append(PeakFilter(cutoff_frequency_hz=3500, gain_db=treble, q=1.0))
+
+    # 4. True Reverb (ഹാൾ എഫക്റ്റ്)
+    if reverb_level > 0:
+        # റൂം സൈസ് റിവർബ് ലെവലിനനുസരിച്ച് മാറ്റുന്നു
+        room_size = 0.3 + (reverb_level * 0.1)
+        board_effects.append(Reverb(room_size=room_size, wet_level=0.15, dry_level=0.85))
+
+    # എഫക്റ്റുകൾ ഓഡിയോയിലേക്ക് അപ്ലൈ ചെയ്യുന്നു
+    board = Pedalboard(board_effects)
+    effected_data = board(data, samplerate)
+
+    # 5. Speed Factor (വേഗത മാറ്റാൻ)
+    if speed_factor != 1.0:
+        samplerate = int(samplerate * speed_factor)
+
+    # മാസ്റ്റേഡ് ഓഡിയോ തിരികെ ഫയലിലേക്ക് സേവ് ചെയ്യുന്നു
+    sf.write(input_filename, effected_data, samplerate, format='MP3', bitrate='192k')
+
+async def edge_tts_generate(text, voice, output_filename):
+    communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_filename)
 
 def generate_google_tts(text, lang, output_filename):
@@ -22,7 +59,7 @@ def generate_google_tts(text, lang, output_filename):
     tts.save(output_filename)
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Pro Studio TTS", layout="wide")
+st.set_page_config(page_title="Roshan Pro Studio TTS", layout="wide")
 st.title("🎙️ Roshan Pro Audio Studio & TTS Splitter")
 
 left_col, right_col = st.columns([1.2, 1])
@@ -44,12 +81,17 @@ with left_col:
 
 with right_col:
     st.write("### 🎛️ Studio Editing Console")
-    # വെബിൽ സുരക്ഷിതമായി വർക്ക് ചെയ്യുന്ന എഫക്റ്റ് കൺട്രോളുകൾ
-    speed_val = st.slider("⏱️ Voice Speed (വേഗത)", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
-    pitch_val = st.slider("🎼 Voice Pitch (ശബ്ദത്തിന്റെ കട്ടി)", min_value=-20, max_value=20, value=0, step=2)
+    sub_col1, sub_col2 = st.columns(2)
     
-    st.write("")
-    st.caption("💡 *Tip: കട്ടി കൂട്ടാൻ Pitch കൂട്ടുക, റോബോട്ടിക് ശബ്ദം മാറാൻ Speed 1.0-ൽ നിർത്തുക.*")
+    with sub_col1:
+        bass_val = st.slider("🔊 Bass Booster (dB)", min_value=0, max_value=12, value=6, step=1)
+        treble_val = st.slider("✨ Treble Enhancer (dB)", min_value=0, max_value=12, value=5, step=1)
+        reverb_val = st.slider("🏛️ True Reverb Level", min_value=0, max_value=5, value=2, step=1)
+
+    with sub_col2:
+        speed_val = st.slider("⏱️ Speed Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
+        use_compressor = st.checkbox("🎚️ Dynamic Compression", value=True)
+        st.caption("💡 *Compression ഓൺ ചെയ്താൽ ശബ്ദം ഒരേ ലെവലിൽ നിലനിൽക്കും.*")
 
 st.write("---")
 
@@ -63,22 +105,25 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
         generated_files = []
         progress_bar = st.progress(0)
         
-        # Edge TTS-ലേക്ക് സ്പീഡ്, പിച്ച് വാല്യൂസ് ഫോർമാറ്റ് ചെയ്യുന്നു
-        speed_arg = f"{'+' if speed_val >= 1.0 else ''}{int((speed_val - 1.0) * 100)}%"
-        pitch_arg = f"{'+' if pitch_val >= 0 else ''}{pitch_val}Hz"
-        
         for index, paragraph in enumerate(paragraphs):
             filename = f"studio_paragraph_{index + 1}.mp3"
             
+            # 1. TTS ജനറേഷൻ
             try:
                 if voice_option[1] == "edge_midhun":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename, speed_arg, pitch_arg))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename))
                 elif voice_option[1] == "edge_sobhana":
-                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename, speed_arg, pitch_arg))
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename))
                 elif voice_option[1] == "google_ml":
                     generate_google_tts(paragraph, "ml", filename)
                 elif voice_option[1] == "edge_en_ava":
-                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename, speed_arg, pitch_arg))
+                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename))
+                
+                # 2. പെഡൽബോർഡ് സ്റ്റുഡിയോ എഫക്റ്റുകൾ നൽകുന്നു
+                apply_advanced_studio_effects(
+                    filename, bass=bass_val, treble=treble_val, 
+                    use_comp=use_compressor, reverb_level=reverb_val, speed_factor=speed_val
+                )
                 
                 generated_files.append(filename)
             except Exception as e:
@@ -86,8 +131,9 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
                 
             progress_bar.progress((index + 1) / len(paragraphs))
             
-        st.success("🎯 എല്ലാ ഓഡിയോകളും വിജയകരമായി തയ്യാറായി കഴിഞ്ഞു!")
+        st.success("🎯 എല്ലാ ഓഡിയോകളും സ്റ്റുഡിയോ ക്വാളിറ്റിയിൽ തയ്യാറായി കഴിഞ്ഞു!")
         
+        # ഓഡിയോ പ്ലെയർ ഡിസ്‌പ്ലേ
         st.write("### 🎧 Listen Mastered Tracks")
         play_col1, play_col2 = st.columns(2)
         for i, file in enumerate(generated_files):
@@ -96,6 +142,7 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
                 st.write(f"🎵 **Track {i+1}**")
                 st.audio(file, format="audio/mp3")
             
+        # സിപ്പ് ഫയൽ നിർമ്മാണം
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for file in generated_files:
