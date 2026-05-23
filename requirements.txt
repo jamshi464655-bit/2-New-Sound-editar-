@@ -1,4 +1,5 @@
 streamlit
 edge-tts
 gTTS
-pydub
+scipy
+numpy
