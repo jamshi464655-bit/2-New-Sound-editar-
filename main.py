@@ -5,53 +5,42 @@ from gtts import gTTS
 import os
 import zipfile
 from io import BytesIO
-from pydub import AudioSegment
-from pydub.effects import compress_dynamic_range, normalize
+import numpy as np
+from scipy.io import wavfile
+import soundfile as sf  # സ്ട്രീംലിറ്റിൽ ഓഡിയോ റീഡ് ചെയ്യാൻ സഹായിക്കുന്നു
 
-# --- WEB CLOUD FFMPEG CONFIGURATION ---
-# സ്ട്രീംലിറ്റ് ക്ലൗഡ് സെർവറിലെ FFmpeg പാത്ത് ലിങ്ക് ചെയ്യുന്നു (Error ഒഴിവാക്കാൻ)
-AudioSegment.converter = "/usr/bin/ffmpeg"
-AudioSegment.ffprobe = "/usr/bin/ffprobe"
-
-# --- ഓഡിയോ പ്രോസസ്സിംഗ് ഫങ്ക്ഷൻ ---
-def apply_advanced_studio_effects(input_filename, bass, treble, use_comp, reverb_level, speed_factor, vocal_boost):
-    # ഓഡിയോ ഫയൽ ലോഡ് ചെയ്യുന്നു
-    audio = AudioSegment.from_file(input_filename)
-    audio = normalize(audio)
+# --- ഓഡിയോ പ്രോസസ്സിംഗ് ഫങ്ക്ഷൻ (Using SciPy) ---
+def apply_studio_effects_scipy(input_filename, bass, treble, speed_factor):
+    # ഓഡിയോ ഫയൽ റീഡ് ചെയ്യുന്നു
+    data, samplerate = sf.read(input_filename)
     
-    # വോക്കൽ ബൂസ്റ്റർ (Vocal Presence)
-    if vocal_boost:
-        vocal_range = audio.filter_bank_highpass(300).filter_bank_lowpass(3000).apply_gain(3)
-        audio = audio.overlay(vocal_range)
-
-    # ബാസ്സ് ബൂസ്റ്റർ (Bass Booster)
-    if bass > 0:
-        bass_part = audio.low_pass_filter(150).apply_gain(bass)
-        audio = audio.overlay(bass_part)
+    # സ്റ്റീരിയോ ആണെങ്കിൽ ഒരു ചാനൽ മാത്രമായി എടുക്കുന്നു (Mono)
+    if len(data.shape) > 1:
+        data = data[:, 0]
         
-    # ട്രബിൾ എൻഹാൻസർ (Treble Enhancer)
+    # നൊർമലൈസേഷൻ (Normalize)
+    if np.max(np.abs(data)) > 0:
+        data = data / np.max(np.abs(data))
+
+    # ലളിതമായ ബാസ്സ്/ട്രബിൾ ഇഫക്റ്റ് ഫിൽട്ടറിംഗ് (Simple Digital Filter)
+    # ബാസ്സ് കൂട്ടാൻ (Low-pass smoothing)
+    if bass > 0:
+        bass_gain = (bass / 12.0) * 0.3
+        smooth_data = np.convolve(data, np.ones(5)/5, mode='same')
+        data = data + (smooth_data * bass_gain)
+        
+    # ട്രബിൾ കൂട്ടാൻ (High-pass sharpening)
     if treble > 0:
-        treble_part = audio.high_pass_filter(2500).apply_gain(treble)
-        audio = audio.overlay(treble_part)
+        treble_gain = (treble / 12.0) * 0.2
+        sharp_data = data - np.convolve(data, np.ones(3)/3, mode='same')
+        data = data + (sharp_data * treble_gain)
 
-    # ട്രൂ റിവർബ് (True Reverb)
-    if reverb_level > 0:
-        reverb_layer = audio.apply_gain(-12 + reverb_level)
-        audio = audio.overlay(reverb_layer, position=5)
-        audio = audio.overlay(reverb_layer, position=10)
-
-    # ഡൈനാമിക് കംപ്രസ്സർ (Dynamic Compression)
-    if use_comp:
-        audio = compress_dynamic_range(audio, threshold=-18.0, ratio=3.5, attack=10.0, release=60.0)
-
-    # സ്പീഡ് കൺട്രോൾ (Speed / Pitch Factor)
+    # സ്പീഡ് കൺട്രോൾ
     if speed_factor != 1.0:
-        new_sample_rate = int(audio.frame_rate * speed_factor)
-        audio = audio._spawn(audio.raw_data, overrides={'frame_rate': new_sample_rate})
-        audio = audio.set_frame_rate(44100)
+        samplerate = int(samplerate * speed_factor)
 
-    # ഹൈ-ക്വാളിറ്റിയിൽ എക്സ്പോർട്ട് ചെയ്യുന്നു
-    audio.export(input_filename, format="mp3", bitrate="192k")
+    # വീണ്ടും ഫയലിലേക്ക് സേവ് ചെയ്യുന്നു
+    sf.write(input_filename, data, samplerate, format='MP3', bitrate=192)
 
 async def edge_tts_generate(text, voice, output_filename):
     communicate = edge_tts.Communicate(text, voice)
@@ -62,7 +51,7 @@ def generate_google_tts(text, lang, output_filename):
     tts.save(output_filename)
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Pro Studio TTS - Cloud", layout="wide")
+st.set_page_config(page_title="Pro Studio TTS", layout="wide")
 st.title("🎙️ Roshan Pro Audio Studio & TTS Splitter")
 
 left_col, right_col = st.columns([1.2, 1])
@@ -84,17 +73,9 @@ with left_col:
 
 with right_col:
     st.write("### 🎛️ Studio Editing Console")
-    sub_col1, sub_col2 = st.columns(2)
-    
-    with sub_col1:
-        bass_val = st.slider("🔊 Bass Booster (dB)", min_value=0, max_value=12, value=5, step=1)
-        treble_val = st.slider("✨ Treble Enhancer", min_value=0, max_value=12, value=4, step=1)
-        reverb_val = st.slider("🏛️ True Reverb Level", min_value=0, max_value=5, value=2, step=1)
-
-    with sub_col2:
-        speed_val = st.slider("⏱️ Speed / Pitch Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
-        use_compressor = st.checkbox("🎚️ Dynamic Compression", value=True)
-        vocal_boost_val = st.checkbox("🗣️ Vocal Presence Booster", value=True)
+    bass_val = st.slider("🔊 Bass Booster", min_value=0, max_value=12, value=4, step=1)
+    treble_val = st.slider("✨ Treble Enhancer", min_value=0, max_value=12, value=4, step=1)
+    speed_val = st.slider("⏱️ Speed Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
 
 st.write("---")
 
@@ -102,7 +83,6 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
     if not text_input.strip():
         st.warning("ദയവായി ടെക്സ്റ്റ് ബോക്സിൽ എന്തെങ്കിലും ടെക്സ്റ്റ് നൽകുക.")
     else:
-        # പാരഗ്രാഫുകളായി തിരിക്കുന്നു
         paragraphs = [p.strip() for p in text_input.split("\n") if p.strip()]
         st.info(f"📋 ആകെ {len(paragraphs)} പാരഗ്രാഫുകൾ കണ്ടെത്തി. പ്രൊസസ്സിംഗ് ആരംഭിക്കുന്നു...")
         
@@ -112,7 +92,7 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
         for index, paragraph in enumerate(paragraphs):
             filename = f"studio_paragraph_{index + 1}.mp3"
             
-            # വോയ്‌സ് ജനറേഷൻ
+            # TTS ജനറേഷൻ
             if voice_option[1] == "edge_midhun":
                 asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename))
             elif voice_option[1] == "edge_sobhana":
@@ -122,22 +102,17 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
             elif voice_option[1] == "edge_en_ava":
                 asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename))
                 
-            # ഓഡിയോ എഫക്റ്റുകൾ നൽകുന്നു
+            # പുതിയ രീതിയിലുള്ള എഫക്റ്റുകൾ നൽകുന്നു
             try:
-                apply_advanced_studio_effects(
-                    filename, bass=bass_val, treble=treble_val, 
-                    use_comp=use_compressor, reverb_level=reverb_val, 
-                    speed_factor=speed_val, vocal_boost=vocal_boost_val
-                )
+                apply_studio_effects_scipy(filename, bass=bass_val, treble=treble_val, speed_factor=speed_val)
             except Exception as e:
-                st.error(f"എഫക്റ്റ് പ്രോസസ്സ് ചെയ്തപ്പോൾ ഒരു തകരാർ (Paragraph {index+1}): {e}")
+                st.error(f"Error in Paragraph {index+1}: {e}")
                 
             generated_files.append(filename)
             progress_bar.progress((index + 1) / len(paragraphs))
             
         st.success("🎯 എല്ലാ ഓഡിയോകളും വിജയകരമായി തയ്യാറായി കഴിഞ്ഞു!")
         
-        # പ്ലെയർ ഡിസ്‌പ്ലേ
         st.write("### 🎧 Listen Mastered Tracks")
         play_col1, play_col2 = st.columns(2)
         for i, file in enumerate(generated_files):
@@ -146,12 +121,12 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
                 st.write(f"🎵 **Track {i+1}**")
                 st.audio(file, format="audio/mp3")
             
-        # സിപ്പ് ഫയൽ നിർമ്മാണം
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for file in generated_files:
                 zip_file.write(file)
-                os.remove(file) # സെർവർ മെമ്മറി ക്ലിയർ ചെയ്യാൻ ഫയൽ ഡിലീറ്റ് ചെയ്യുന്നു
+                if os.path.exists(file):
+                    os.remove(file)
                 
         st.write("---")
         st.download_button(
