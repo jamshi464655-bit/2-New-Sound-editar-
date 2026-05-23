@@ -5,42 +5,6 @@ from gtts import gTTS
 import os
 import zipfile
 from io import BytesIO
-import numpy as np
-from scipy.io import wavfile
-import soundfile as sf  # സ്ട്രീംലിറ്റിൽ ഓഡിയോ റീഡ് ചെയ്യാൻ സഹായിക്കുന്നു
-
-# --- ഓഡിയോ പ്രോസസ്സിംഗ് ഫങ്ക്ഷൻ (Using SciPy) ---
-def apply_studio_effects_scipy(input_filename, bass, treble, speed_factor):
-    # ഓഡിയോ ഫയൽ റീഡ് ചെയ്യുന്നു
-    data, samplerate = sf.read(input_filename)
-    
-    # സ്റ്റീരിയോ ആണെങ്കിൽ ഒരു ചാനൽ മാത്രമായി എടുക്കുന്നു (Mono)
-    if len(data.shape) > 1:
-        data = data[:, 0]
-        
-    # നൊർമലൈസേഷൻ (Normalize)
-    if np.max(np.abs(data)) > 0:
-        data = data / np.max(np.abs(data))
-
-    # ലളിതമായ ബാസ്സ്/ട്രബിൾ ഇഫക്റ്റ് ഫിൽട്ടറിംഗ് (Simple Digital Filter)
-    # ബാസ്സ് കൂട്ടാൻ (Low-pass smoothing)
-    if bass > 0:
-        bass_gain = (bass / 12.0) * 0.3
-        smooth_data = np.convolve(data, np.ones(5)/5, mode='same')
-        data = data + (smooth_data * bass_gain)
-        
-    # ട്രബിൾ കൂട്ടാൻ (High-pass sharpening)
-    if treble > 0:
-        treble_gain = (treble / 12.0) * 0.2
-        sharp_data = data - np.convolve(data, np.ones(3)/3, mode='same')
-        data = data + (sharp_data * treble_gain)
-
-    # സ്പീഡ് കൺട്രോൾ
-    if speed_factor != 1.0:
-        samplerate = int(samplerate * speed_factor)
-
-    # വീണ്ടും ഫയലിലേക്ക് സേവ് ചെയ്യുന്നു
-    sf.write(input_filename, data, samplerate, format='MP3', bitrate=192)
 
 async def edge_tts_generate(text, voice, output_filename):
     communicate = edge_tts.Communicate(text, voice)
@@ -72,10 +36,8 @@ with left_col:
     )
 
 with right_col:
-    st.write("### 🎛️ Studio Editing Console")
-    bass_val = st.slider("🔊 Bass Booster", min_value=0, max_value=12, value=4, step=1)
-    treble_val = st.slider("✨ Treble Enhancer", min_value=0, max_value=12, value=4, step=1)
-    speed_val = st.slider("⏱️ Speed Factor", min_value=0.7, max_value=1.5, value=1.0, step=0.05)
+    st.write("### ℹ️ Web Server Status")
+    st.info("🌐 Web Hosting Mode: സെർവറിൽ മികച്ച സ്പീഡിലും എറർ ഇല്ലാതെയും വർക്ക് ചെയ്യാൻ പാകത്തിലാണ് ഈ വേർഷൻ കോൺഫിഗർ ചെയ്തിരിക്കുന്നത്.")
 
 st.write("---")
 
@@ -93,22 +55,20 @@ if st.button("🚀 Process & Generate Studio Audio", type="primary", use_contain
             filename = f"studio_paragraph_{index + 1}.mp3"
             
             # TTS ജനറേഷൻ
-            if voice_option[1] == "edge_midhun":
-                asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename))
-            elif voice_option[1] == "edge_sobhana":
-                asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename))
-            elif voice_option[1] == "google_ml":
-                generate_google_tts(paragraph, "ml", filename)
-            elif voice_option[1] == "edge_en_ava":
-                asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename))
-                
-            # പുതിയ രീതിയിലുള്ള എഫക്റ്റുകൾ നൽകുന്നു
             try:
-                apply_studio_effects_scipy(filename, bass=bass_val, treble=treble_val, speed_factor=speed_val)
+                if voice_option[1] == "edge_midhun":
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-MidhunNeural", filename))
+                elif voice_option[1] == "edge_sobhana":
+                    asyncio.run(edge_tts_generate(paragraph, "ml-IN-SobhanaNeural", filename))
+                elif voice_option[1] == "google_ml":
+                    generate_google_tts(paragraph, "ml", filename)
+                elif voice_option[1] == "edge_en_ava":
+                    asyncio.run(edge_tts_generate(paragraph, "en-US-AvaNeural", filename))
+                
+                generated_files.append(filename)
             except Exception as e:
                 st.error(f"Error in Paragraph {index+1}: {e}")
                 
-            generated_files.append(filename)
             progress_bar.progress((index + 1) / len(paragraphs))
             
         st.success("🎯 എല്ലാ ഓഡിയോകളും വിജയകരമായി തയ്യാറായി കഴിഞ്ഞു!")
